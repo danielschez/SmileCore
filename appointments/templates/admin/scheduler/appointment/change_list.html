@@ -1,0 +1,1142 @@
+{% extends "admin/change_list.html" %}
+
+{% block content_title %}
+<h1>Calendario de Citas</h1>
+{% endblock %}
+
+{% block result_list %}
+<div style="margin-bottom: 20px;">
+    <button id="toggleView" type="button" class="button" style="background: #417690; color: white; border: none; padding: 8px 16px; border-radius: 4px; cursor: pointer;">
+        Ver Lista
+    </button>
+</div>
+
+<div id="calendar-container">
+    <div id="calendar" style="min-height: 600px;"></div>
+</div>
+
+<div id="list-container" style="display: none;">
+    {{ block.super }}
+</div>
+
+<!-- Modal para crear cita -->
+<div id="appointmentModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Nueva Cita</h2>
+            <span class="close">&times;</span>
+        </div>
+        <div class="modal-body">
+            <form id="appointmentForm" method="post">
+                <div class="form-group">
+                    <label for="selectedDate">Fecha seleccionada:</label>
+                    <input type="date" id="selectedDate" name="date" readonly class="readonly-field">
+                    <small class="help-text">Fecha seleccionada desde el calendario</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="appointmentTime">Hora:</label>
+                    <input type="time" id="appointmentTime" name="time" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="doctorSelect">Doctor:</label>
+                    <select id="doctorSelect" name="doctor_id" required>
+                        <option value="">Seleccione un doctor</option>
+                        {% for doctor in doctors %}
+                        <option value="{{ doctor.id }}">Dr. {{ doctor.user.get_full_name }} - {{ doctor.specialty }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="patientSelect">Paciente:</label>
+                    <select id="patientSelect" name="patient_id" required>
+                        <option value="">Seleccione un paciente</option>
+                        {% for patient in patients %}
+                        <option value="{{ patient.id }}">{{ patient.user.get_full_name|default:patient.user.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                
+                <div id="appointmentSummary" class="appointment-summary" style="display: none;">
+                    <h4>Resumen de la cita:</h4>
+                    <div class="summary-content">
+                        <p><strong>Fecha:</strong> <span id="summaryDate"></span></p>
+                        <p><strong>Hora:</strong> <span id="summaryTime"></span></p>
+                        <p><strong>Doctor:</strong> <span id="summaryDoctor"></span></p>
+                        <p><strong>Paciente:</strong> <span id="summaryPatient"></span></p>
+                    </div>
+                </div>
+                
+                <div id="availabilityMessage" class="message" style="display: none;"></div>
+                
+                <div class="form-actions">
+                    <button type="button" id="checkAvailability" class="button" style="background: #ffc107; color: black;">
+                        Verificar Disponibilidad
+                    </button>
+                    <button type="submit" id="createAppointment" class="button" style="background: #28a745; color: white;" disabled>
+                        Crear Cita
+                    </button>
+                    <button type="button" id="cancelButton" class="button cancel-button" style="background: #6c757d; color: white;">
+                        Cancelar
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Eventos para el calendario -->
+{{ events|json_script:"events-data" }}
+{{ doctors_data|json_script:"doctors-data" }}
+
+<!-- FullCalendar -->
+<link href="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.3/main.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@5.11.3/main.min.js"></script>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    console.log('DOM loaded, inicializando calendario...');
+    
+    // Estado global de la aplicación
+    const appState = {
+        currentView: 'calendar', // 'calendar' o 'list'
+        calendar: null,
+        eventsData: [],
+        isLoading: false
+    };
+
+    // Función mejorada para obtener elementos con reintento
+    function getElement(id, maxRetries = 3) {
+        let retries = 0;
+        while (retries < maxRetries) {
+            const element = document.getElementById(id);
+            if (element) {
+                return element;
+            }
+            retries++;
+        }
+        return null;
+    }
+
+    // Función para obtener elementos por selector
+    function getElementBySelector(selector, maxRetries = 3) {
+        let retries = 0;
+        while (retries < maxRetries) {
+            const element = document.querySelector(selector);
+            if (element) {
+                return element;
+            }
+            retries++;
+        }
+        return null;
+    }
+    
+    // Obtener elementos del DOM con verificación mejorada
+    const elements = {
+        calendarEl: getElement('calendar'),
+        toggleBtn: getElement('toggleView'),
+        refreshBtn: getElement('refreshCalendar'),
+        calendarContainer: getElement('calendar-container'),
+        listContainer: getElement('list-container'),
+        modal: getElement('appointmentModal'),
+        form: getElement('appointmentForm'),
+        closeBtn: getElementBySelector('.modal .close'),
+        cancelBtn: getElement('cancelButton'),
+        selectedDate: getElement('selectedDate'),
+        appointmentTime: getElement('appointmentTime'),
+        doctorSelect: getElement('doctorSelect'),
+        patientSelect: getElement('patientSelect'),
+        checkAvailabilityBtn: getElement('checkAvailability'),
+        createAppointmentBtn: getElement('createAppointment'),
+        availabilityMessage: getElement('availabilityMessage'),
+        appointmentSummary: getElement('appointmentSummary'),
+        summaryDate: getElement('summaryDate'),
+        summaryTime: getElement('summaryTime'),
+        summaryDoctor: getElement('summaryDoctor'),
+        summaryPatient: getElement('summaryPatient')
+    };
+
+    // Log para debugging - verificar qué elementos se encuentran
+    Object.entries(elements).forEach(([key, element]) => {
+        console.log(`${key}:`, element ? 'Encontrado' : 'NO ENCONTRADO');
+    });
+
+    // Verificar elementos críticos
+    if (!elements.calendarEl) {
+        console.error('CRÍTICO: Elemento calendar no encontrado');
+        return;
+    }
+
+    // Función para cargar eventos desde el servidor
+    // Función para cargar eventos desde el servidor
+    function loadEventsFromServer() {
+        return new Promise((resolve, reject) => {
+            console.log('Cargando eventos desde el servidor...');
+            
+            fetch('/admin/scheduler/appointment/get-events/', {
+                method: 'GET',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                }
+            })
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Error al cargar eventos: ' + response.status);
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Respuesta completa del servidor:', data);
+                // CAMBIO CLAVE: Extraer la lista de eventos de la clave 'events'
+                appState.eventsData = data.events || [];
+                console.log('Eventos cargados desde servidor:', appState.eventsData.length, 'eventos');
+                resolve(appState.eventsData);
+            })
+            .catch(error => {
+                console.error('Error cargando eventos:', error);
+                // Fallback a los datos del template
+                loadEventsFromTemplate();
+                resolve(appState.eventsData);
+            });
+        });
+    }
+
+    // Función para cargar eventos desde el template (fallback)
+    function loadEventsFromTemplate() {
+        try {
+            const eventsScript = document.getElementById('events-data');
+            if (eventsScript && eventsScript.textContent) {
+                appState.eventsData = JSON.parse(eventsScript.textContent);
+                console.log('Events data cargado desde template:', appState.eventsData.length, 'eventos');
+            } else {
+                console.warn('Script events-data no encontrado o vacío');
+                appState.eventsData = [];
+            }
+        } catch (e) {
+            console.error('Error al parsear datos JSON del template:', e);
+            appState.eventsData = [];
+        }
+    }
+
+    // Función para procesar y formatear eventos
+    function processEvents(rawEvents) {
+        if (!Array.isArray(rawEvents)) {
+            console.warn('Los eventos no son un array:', rawEvents);
+            return [];
+        }
+
+        return rawEvents.map(event => {
+            // Asegurar que el evento tenga el formato correcto para FullCalendar
+            const processedEvent = {
+                id: event.id || `event-${Date.now()}-${Math.random()}`,
+                title: event.title || 'Cita sin título',
+                start: event.start || null,
+                end: event.end || null,
+                backgroundColor: event.backgroundColor || event.color || '#417690',
+                borderColor: event.borderColor || event.backgroundColor || event.color || '#417690',
+                textColor: event.textColor || 'white',
+                // Generar la URL de edición de forma dinámica
+                url: `/admin/scheduler/appointment/${event.id}/change/`,
+                extendedProps: {
+                    doctor: event.extendedProps?.doctor || '',
+                    patient: event.extendedProps?.patient || '',
+                    status: event.extendedProps?.status || 'scheduled',
+                    service: event.extendedProps?.service || '',
+                    description: event.extendedProps?.description || ''
+                }
+            };
+
+            // Si tenemos hora específica, agregarla al título
+            if (event.extendedProps?.time) {
+                processedEvent.title = `${event.extendedProps.time} - ${processedEvent.title}`;
+            }
+
+            return processedEvent;
+        });
+    }
+
+    // Función para actualizar el calendario con nuevos eventos
+    function updateCalendarEvents(events) {
+        if (!appState.calendar) {
+            console.warn('Calendar no está inicializado');
+            return;
+        }
+
+        console.log('Actualizando eventos del calendario:', events.length);
+        
+        // Remover todos los eventos existentes
+        appState.calendar.removeAllEvents();
+        
+        // Agregar los nuevos eventos
+        const processedEvents = processEvents(events);
+        appState.calendar.addEventSource(processedEvents);
+        
+        // Refrescar la vista
+        appState.calendar.refetchEvents();
+        
+        console.log('Eventos actualizados en el calendario');
+    }
+
+    // Función para cambiar entre vistas
+    function toggleView() {
+        if (appState.isLoading) {
+            console.log('Operación en progreso, ignorando toggle');
+            return;
+        }
+
+        const isCalendarVisible = appState.currentView === 'calendar';
+        
+        if (isCalendarVisible) {
+            // Cambiar a vista lista
+            appState.currentView = 'list';
+            elements.calendarContainer.style.display = 'none';
+            elements.listContainer.style.display = 'block';
+            elements.toggleBtn.textContent = 'Ver Calendario';
+            console.log('Vista cambiada a: lista');
+        } else {
+            // Cambiar a vista calendario
+            appState.currentView = 'calendar';
+            elements.calendarContainer.style.display = 'block';
+            elements.listContainer.style.display = 'none';
+            elements.toggleBtn.textContent = 'Ver Lista';
+            
+            // Refrescar el calendario cuando se vuelve a mostrar
+            if (appState.calendar) {
+                setTimeout(() => {
+                    appState.calendar.updateSize();
+                    appState.calendar.render();
+                }, 100);
+            }
+            console.log('Vista cambiada a: calendario');
+        }
+    }
+
+    // Función para refrescar el calendario
+    function refreshCalendar() {
+        if (appState.isLoading) {
+            console.log('Ya hay una operación de carga en progreso');
+            return;
+        }
+
+        appState.isLoading = true;
+        elements.refreshBtn.textContent = 'Cargando...';
+        elements.refreshBtn.disabled = true;
+
+        loadEventsFromServer()
+            .then(events => {
+                updateCalendarEvents(events);
+                console.log('Calendario refrescado exitosamente');
+            })
+            .catch(error => {
+                console.error('Error al refrescar calendario:', error);
+            })
+            .finally(() => {
+                appState.isLoading = false;
+                elements.refreshBtn.textContent = 'Actualizar Calendario';
+                elements.refreshBtn.disabled = false;
+            });
+    }
+
+    // Funciones utilitarias
+    function showMessage(text, type) {
+        if (elements.availabilityMessage) {
+            elements.availabilityMessage.textContent = text;
+            elements.availabilityMessage.className = `message ${type}`;
+            elements.availabilityMessage.style.display = 'block';
+        } else {
+            console.warn('Elemento availabilityMessage no encontrado, usando alert');
+            alert(text);
+        }
+    }
+
+    function formatDateForDisplay(dateStr) {
+        const date = new Date(dateStr + 'T00:00:00');
+        const options = { 
+            weekday: 'long', 
+            year: 'numeric', 
+            month: 'long', 
+            day: 'numeric' 
+        };
+        return date.toLocaleDateString('es-ES', options);
+    }
+
+    function updateAppointmentSummary() {
+        const formData = getFormData();
+        
+        if (formData.date && formData.time && formData.doctor_id && formData.patient_id) {
+            if (elements.summaryDate) {
+                elements.summaryDate.textContent = formatDateForDisplay(formData.date);
+            }
+            if (elements.summaryTime) {
+                elements.summaryTime.textContent = formData.time;
+            }
+            if (elements.summaryDoctor && elements.doctorSelect && elements.doctorSelect.selectedIndex > 0) {
+                const selectedDoctor = elements.doctorSelect.options[elements.doctorSelect.selectedIndex];
+                elements.summaryDoctor.textContent = selectedDoctor.text;
+            }
+            if (elements.summaryPatient && elements.patientSelect && elements.patientSelect.selectedIndex > 0) {
+                const selectedPatient = elements.patientSelect.options[elements.patientSelect.selectedIndex];
+                elements.summaryPatient.textContent = selectedPatient.text;
+            }
+            
+            if (elements.appointmentSummary) {
+                elements.appointmentSummary.style.display = 'block';
+            }
+        } else {
+            if (elements.appointmentSummary) {
+                elements.appointmentSummary.style.display = 'none';
+            }
+        }
+    }
+
+    function resetForm() {
+        console.log('Ejecutando resetForm...');
+        
+        try {
+            // Resetear campos individuales
+            if (elements.selectedDate) {
+                elements.selectedDate.value = '';
+                elements.selectedDate.dispatchEvent(new Event('change'));
+            }
+            if (elements.appointmentTime) {
+                elements.appointmentTime.value = '';
+                elements.appointmentTime.dispatchEvent(new Event('change'));
+            }
+            if (elements.doctorSelect) {
+                elements.doctorSelect.selectedIndex = 0;
+                elements.doctorSelect.dispatchEvent(new Event('change'));
+            }
+            if (elements.patientSelect) {
+                elements.patientSelect.selectedIndex = 0;
+                elements.patientSelect.dispatchEvent(new Event('change'));
+            }
+            
+            if (elements.createAppointmentBtn) elements.createAppointmentBtn.disabled = true;
+            if (elements.availabilityMessage) {
+                elements.availabilityMessage.style.display = 'none';
+                elements.availabilityMessage.className = 'message';
+            }
+            if (elements.appointmentSummary) {
+                elements.appointmentSummary.style.display = 'none';
+            }
+            
+            console.log('Form reseteado correctamente');
+        } catch (error) {
+            console.error('Error en resetForm:', error);
+        }
+    }
+
+    function openModal(dateStr) {
+        console.log('Abriendo modal para fecha:', dateStr);
+        
+        if (!elements.modal) {
+            console.error('Modal no disponible en openModal');
+            return;
+        }
+        
+        // Convertir la fecha de formato YYYY-MM-DD
+        let formattedDate = dateStr;
+        
+        // Si la fecha viene en otro formato, convertirla
+        if (dateStr.includes('/')) {
+            const parts = dateStr.split('/');
+            if (parts.length === 3) {
+                if (parts[2].length === 4) {
+                    formattedDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                }
+            }
+        }
+        
+        const selectedDate = new Date(formattedDate + 'T00:00:00');
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        // Bloquear fechas pasadas
+        if (selectedDate < today) {
+            alert('No se pueden crear citas en fechas pasadas.');
+            return;
+        }
+        
+        // Resetear el form y establecer la fecha
+        resetForm();
+        
+        if (elements.selectedDate) {
+            elements.selectedDate.value = formattedDate;
+            console.log('Fecha establecida en el campo:', formattedDate);
+            
+            setTimeout(() => {
+                elements.selectedDate.dispatchEvent(new Event('change'));
+            }, 100);
+        }
+        
+        elements.modal.style.display = 'block';
+        console.log('Modal abierto para fecha:', formatDateForDisplay(formattedDate));
+    }
+
+    function closeModal() {
+        console.log('Cerrando modal...');
+        if (elements.modal) {
+            elements.modal.style.display = 'none';
+        }
+        resetForm();
+    }
+
+    // Event listeners principales
+    if (elements.toggleBtn) {
+        elements.toggleBtn.addEventListener('click', toggleView);
+    }
+
+    if (elements.refreshBtn) {
+        elements.refreshBtn.addEventListener('click', refreshCalendar);
+    }
+
+    // Event listeners del modal
+    if (elements.closeBtn) {
+        elements.closeBtn.addEventListener('click', closeModal);
+    }
+    
+    if (elements.cancelBtn) {
+        elements.cancelBtn.addEventListener('click', closeModal);
+    }
+    
+    // Cerrar modal al hacer click fuera
+    if (elements.modal) {
+        window.addEventListener('click', function(event) {
+            if (event.target === elements.modal) {
+                closeModal();
+            }
+        });
+    }
+
+    // Función para obtener CSRF token
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    // Función para obtener datos del formulario
+    function getFormData() {
+        const data = {
+            date: elements.selectedDate ? elements.selectedDate.value : '',
+            time: elements.appointmentTime ? elements.appointmentTime.value : '',
+            doctor_id: elements.doctorSelect ? elements.doctorSelect.value : '',
+            patient_id: elements.patientSelect ? elements.patientSelect.value : ''
+        };
+        
+        console.log('Datos del formulario:', data);
+        return data;
+    }
+
+    // Función para validar formulario
+    function validateForm() {
+        const formData = getFormData();
+        const isValid = formData.date && formData.time && formData.doctor_id && formData.patient_id;
+        
+        console.log('Validación del formulario:', {
+            fecha: formData.date ? '✓' : '✗',
+            hora: formData.time ? '✓' : '✗', 
+            doctor: formData.doctor_id ? '✓' : '✗',
+            paciente: formData.patient_id ? '✓' : '✗',
+            válido: isValid
+        });
+        
+        return isValid;
+    }
+
+    // Función para verificar disponibilidad
+    function checkAvailability(date, time, doctorId) {
+        console.log('Verificando disponibilidad:', { date, time, doctorId });
+        
+        if (!date || !time || !doctorId) {
+            showMessage('Por favor complete la fecha, hora y doctor antes de verificar disponibilidad.', 'error');
+            return;
+        }
+        
+        fetch('/admin/scheduler/appointment/check-availability/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({ date, time, doctor_id: doctorId })
+        })
+        .then(res => res.json())
+        .then(data => {
+            console.log('Respuesta disponibilidad:', data);
+            
+            if (elements.createAppointmentBtn) {
+                if (data.available) {
+                    showMessage('✅ Horario disponible. Puede crear la cita.', 'success');
+                    elements.createAppointmentBtn.disabled = false;
+                    updateAppointmentSummary();
+                } else {
+                    showMessage('❌ ' + (data.message || 'Horario no disponible.'), 'error');
+                    elements.createAppointmentBtn.disabled = true;
+                    if (elements.appointmentSummary) {
+                        elements.appointmentSummary.style.display = 'none';
+                    }
+                }
+            }
+        })
+        .catch(error => {
+            console.error('Error verificando disponibilidad:', error);
+            showMessage('Error al verificar disponibilidad.', 'error');
+            if (elements.createAppointmentBtn) {
+                elements.createAppointmentBtn.disabled = true;
+            }
+        });
+    }
+
+    // Función para crear cita
+    function createAppointment(data) {
+        console.log('Creando cita:', data);
+        
+        fetch('/admin/scheduler/appointment/create-appointment/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify(data)
+        })
+        .then(res => res.json())
+        .then(data => {
+            console.log('Respuesta crear cita:', data);
+            
+            if (data.success) {
+                showMessage('✅ Cita creada correctamente.', 'success');
+                setTimeout(() => {
+                    closeModal();
+                    // En lugar de recargar toda la página, solo refrescar el calendario
+                    refreshCalendar();
+                }, 1500);
+            } else {
+                showMessage('❌ ' + (data.error || 'Error al crear la cita.'), 'error');
+            }
+        })
+        .catch(error => {
+            console.error('Error creando cita:', error);
+            showMessage('Error al crear la cita.', 'error');
+        });
+    }
+
+    // Event listener para verificar disponibilidad
+    if (elements.checkAvailabilityBtn) {
+        elements.checkAvailabilityBtn.addEventListener('click', function() {
+            console.log('Click en verificar disponibilidad');
+            
+            const formData = getFormData();
+            
+            if (!formData.date || !formData.time || !formData.doctor_id) {
+                showMessage('Por favor complete la fecha, hora y doctor antes de verificar disponibilidad.', 'error');
+                return;
+            }
+
+            // Validar que la hora no sea en el pasado para el día actual
+            const selectedDateTime = new Date(formData.date + 'T' + formData.time);
+            const now = new Date();
+            
+            if (selectedDateTime <= now) {
+                showMessage('No se pueden crear citas en horarios pasados.', 'error');
+                return;
+            }
+
+            checkAvailability(formData.date, formData.time, formData.doctor_id);
+        });
+    }
+
+    // Event listener para crear cita
+    function setupFormSubmission() {
+        if (elements.form) {
+            elements.form.addEventListener('submit', function(e) {
+                console.log('Submit del formulario');
+                e.preventDefault();
+                
+                if (!validateForm()) {
+                    showMessage('Por favor complete todos los campos requeridos.', 'error');
+                    return;
+                }
+                
+                const formData = getFormData();
+                createAppointment(formData);
+            });
+        }
+        
+        if (elements.createAppointmentBtn) {
+            elements.createAppointmentBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                console.log('Click en crear cita');
+                
+                if (elements.form && e.target.type === 'submit') {
+                    return;
+                }
+                
+                if (!validateForm()) {
+                    showMessage('Por favor complete todos los campos requeridos.', 'error');
+                    return;
+                }
+                
+                const formData = getFormData();
+                createAppointment(formData);
+            });
+        }
+    }
+
+    setupFormSubmission();
+
+    // Auto-verificar disponibilidad cuando cambien los campos
+    if (elements.appointmentTime && elements.doctorSelect && elements.patientSelect) {
+        [elements.appointmentTime, elements.doctorSelect, elements.patientSelect].forEach(element => {
+            element.addEventListener('change', function() {
+                console.log('Cambio detectado en:', element.id, 'Valor:', element.value);
+                
+                setTimeout(() => {
+                    const formData = getFormData();
+                    console.log('Form data tras cambio:', formData);
+                    
+                    if (formData.date && formData.time && formData.doctor_id) {
+                        console.log('Verificando disponibilidad automáticamente...');
+                        checkAvailability(formData.date, formData.time, formData.doctor_id);
+                    } else {
+                        console.log('Campos incompletos para verificar disponibilidad');
+                        if (elements.createAppointmentBtn) {
+                            elements.createAppointmentBtn.disabled = true;
+                        }
+                        if (elements.availabilityMessage) {
+                            elements.availabilityMessage.style.display = 'none';
+                        }
+                        if (elements.appointmentSummary) {
+                            elements.appointmentSummary.style.display = 'none';
+                        }
+                    }
+                }, 100);
+            });
+        });
+    }
+
+    // Inicialización del calendario
+    async function initializeCalendar() {
+        console.log('Inicializando calendario...');
+        
+        // Cargar eventos
+        await loadEventsFromServer();
+        
+        // Crear el calendario
+        appState.calendar = new FullCalendar.Calendar(elements.calendarEl, {
+            initialView: 'dayGridMonth',
+            headerToolbar: {
+                left: 'prev,next today',
+                center: 'title',
+                right: 'dayGridMonth,timeGridWeek,timeGridDay'
+            },
+            buttonText: {
+                today: 'Hoy',
+                month: 'Mes',
+                week: 'Semana',
+                day: 'Día'
+            },
+            events: function(fetchInfo, successCallback, failureCallback) {
+                // Usar los eventos cargados del estado
+                const processedEvents = processEvents(appState.eventsData);
+                console.log('Eventos procesados para FullCalendar:', processedEvents);
+                successCallback(processedEvents);
+            },
+            dateClick: function (info) {
+                console.log('Fecha clickeada:', info.dateStr);
+                openModal(info.dateStr);
+            },
+            eventClick: function (info) {
+                // MODIFICACIÓN CLAVE: Abrir la URL de edición en la misma ventana
+                if (info.event.url) {
+                    console.log('URL del evento:', info.event.url);
+                    window.location.href = info.event.url;
+                } else {
+                    // Prevenir el comportamiento por defecto de FullCalendar si no hay URL
+                    info.jsEvent.preventDefault(); 
+                }
+            },
+            height: 600,
+            validRange: {
+                start: new Date().toISOString().split('T')[0]
+            },
+            eventDidMount: function(info) {
+                // Agregar tooltip con información adicional
+                if (info.event.extendedProps.doctor || info.event.extendedProps.patient) {
+                    info.el.title = `Doctor: ${info.event.extendedProps.doctor}\nPaciente: ${info.event.extendedProps.patient}`;
+                }
+            }
+        });
+
+        // Renderizar el calendario
+        appState.calendar.render();
+        console.log('Calendario renderizado con', appState.eventsData.length, 'eventos');
+    }
+
+    // Inicializar la aplicación
+    initializeCalendar()
+        .then(() => {
+            console.log('Inicialización completada exitosamente');
+        })
+        .catch(error => {
+            console.error('Error en la inicialización:', error);
+            // Fallback: intentar con datos del template
+            loadEventsFromTemplate();
+            appState.calendar = new FullCalendar.Calendar(elements.calendarEl, {
+                initialView: 'dayGridMonth',
+                events: processEvents(appState.eventsData),
+                dateClick: function (info) {
+                    openModal(info.dateStr);
+                },
+                height: 600
+            });
+            appState.calendar.render();
+        });
+});
+</script>
+
+<style>
+#calendar-container {
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 15px;
+    margin-top: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+#calendar {
+    max-width: 100%;
+    margin: 0 auto;
+}
+
+.fc-event {
+    border-radius: 3px;
+    cursor: pointer;
+}
+
+.fc-toolbar-title {
+    color: #333;
+    font-weight: bold;
+}
+
+.fc-button {
+    background: #417690 !important;
+    border-color: #417690 !important;
+}
+
+.fc-button:hover {
+    background: #2d5aa0 !important;
+    border-color: #2d5aa0 !important;
+}
+
+.fc-day-today {
+    background-color: #fff3cd !important;
+}
+
+.fc-day-past {
+    background-color: #f8f9fa !important;
+    color: #6c757d !important;
+}
+
+/* Estilos del modal */
+.modal {
+    position: fixed;
+    z-index: 10000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background-color: #fefefe;
+    margin: 5% auto;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 600px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    animation: modalSlideIn 0.3s ease;
+}
+
+@keyframes modalSlideIn {
+    from { opacity: 0; transform: translateY(-50px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.modal-header {
+    padding: 20px 30px;
+    background: #417690;
+    color: white;
+    border-radius: 8px 8px 0 0;
+    position: relative;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.5em;
+}
+
+.close {
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+    color: white;
+    transition: color 0.2s;
+}
+
+.close:hover {
+    color: #ffcccc;
+}
+
+.modal-body {
+    padding: 30px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: bold;
+    color: #333;
+}
+
+.form-group input,
+.form-group select {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: border-color 0.2s;
+    box-sizing: border-box;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+    outline: none;
+    border-color: #417690;
+}
+
+.readonly-field {
+    background-color: #e9ecef !important;
+    color: #495057 !important;
+    font-weight: bold;
+    cursor: default;
+    border-color: #ced4da !important;
+}
+
+.readonly-field:focus {
+    border-color: #ced4da !important;
+    box-shadow: none !important;
+}
+
+.help-text {
+    display: block;
+    margin-top: 5px;
+    color: #6c757d;
+    font-size: 12px;
+    font-style: italic;
+}
+
+.appointment-summary {
+    background: #e9f7ef;
+    border: 1px solid #d4edda;
+    border-radius: 6px;
+    padding: 15px;
+    margin: 20px 0;
+}
+
+.appointment-summary h4 {
+    margin: 0 0 10px 0;
+    color: #155724;
+    font-size: 16px;
+}
+
+.appointment-summary .summary-content p {
+    margin: 5px 0;
+    color: #155724;
+}
+
+.appointment-summary .summary-content strong {
+    color: #0c5460;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 30px;
+    padding-top: 20px;
+    border-top: 1px solid #eee;
+}
+
+.form-actions .button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: all 0.2s;
+}
+
+.form-actions .button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.form-actions .button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.message {
+    padding: 12px;
+    border-radius: 4px;
+    margin: 15px 0;
+    font-weight: bold;
+}
+
+.message.success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.message.error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+.message.info {
+    background-color: #d1ecf1;
+    color: #0c5460;
+    border: 1px solid #bee5eb;
+}
+
+/* Indicador de carga */
+.loading {
+    opacity: 0.7;
+    pointer-events: none;
+}
+
+.button:disabled {
+    background-color: #6c757d !important;
+    cursor: not-allowed;
+}
+
+/* Mejoras visuales para eventos */
+.fc-event-title {
+    font-weight: bold;
+}
+
+.fc-event-time {
+    font-size: 0.85em;
+}
+
+/* Estados de eventos */
+.event-confirmed {
+    background-color: #28a745 !important;
+    border-color: #28a745 !important;
+}
+
+.event-pending {
+    background-color: #ffc107 !important;
+    border-color: #ffc107 !important;
+    color: #212529 !important;
+}
+
+.event-cancelled {
+    background-color: #dc3545 !important;
+    border-color: #dc3545 !important;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .modal-content {
+        width: 95%;
+        margin: 10% auto;
+    }
+    
+    .modal-header,
+    .modal-body {
+        padding: 20px;
+    }
+    
+    .form-actions {
+        flex-direction: column;
+    }
+    
+    .form-actions .button {
+        width: 100%;
+    }
+    
+    #calendar-container {
+        padding: 10px;
+    }
+}
+
+/* Mejoras de accesibilidad */
+.fc-button:focus {
+    outline: 2px solid #417690;
+    outline-offset: 2px;
+}
+
+.modal:focus {
+    outline: none;
+}
+
+.form-group input:invalid {
+    border-color: #dc3545;
+}
+
+.form-group input:valid {
+    border-color: #28a745;
+}
+
+/* Animaciones suaves */
+.fc-event {
+    transition: all 0.2s ease;
+}
+
+.fc-event:hover {
+    transform: scale(1.02);
+    z-index: 999;
+}
+
+.button {
+    transition: all 0.2s ease;
+}
+
+.button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+</style>
+{% endblock %}

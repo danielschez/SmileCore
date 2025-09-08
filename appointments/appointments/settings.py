@@ -27,6 +27,19 @@ INSTALLED_APPS = [
     'scheduler',
 ]
 
+JAZZMIN_SETTINGS = {
+    "site_title": "Panel de Administración",
+    "site_header": "Control de Citas",
+    "site_brand": "Citas Médicas",
+    "welcome_sign": "Bienvenido al panel de administración",
+    "copyright": "SmileCore",
+
+    "topmenu_links": [
+        {"name": "Calendario de Citas", "url": "/admin/appointments/appointment/calendar/", "permissions": ["appointments.view_appointment"]},
+    ],
+}
+
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -42,7 +55,7 @@ ROOT_URLCONF = 'appointments.urls'
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
+        'DIRS': [BASE_DIR / 'templates'],
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
@@ -90,13 +103,14 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = 'es'
 
-TIME_ZONE = 'UTC'
+TIME_ZONE = 'America/Mexico_City'
 
 USE_I18N = True
-
+USE_L10N = True
 USE_TZ = True
+
 
 
 # Static files (CSS, JavaScript, Images)
