@@ -20,6 +20,11 @@ class Doctor(models.Model):
 
     def __str__(self):
         return f"Dr. {self.full_name} - {self.specialty}"
+    
+    class Meta:
+        verbose_name = "Doctor"
+        verbose_name_plural = "Doctores"
+        ordering = ['full_name']
 
 
 class Patient(models.Model):
@@ -41,6 +46,11 @@ class Patient(models.Model):
 
     def __str__(self):
         return self.full_name
+    
+    class Meta:
+        verbose_name = "Patient"
+        verbose_name_plural = "Pacientes"
+        ordering = ['full_name']
 
 
 # ─────────────────────────────
@@ -56,7 +66,7 @@ class Weekday(models.Model):
 
     class Meta:
         verbose_name = "Weekday"
-        verbose_name_plural = "Weekdays"
+        verbose_name_plural = "Días de la Semana"
         ordering = ['id']
 
 
@@ -71,7 +81,7 @@ class WorkingHour(models.Model):
 
     class Meta:
         verbose_name = "Working Hour"
-        verbose_name_plural = "Working Hours"
+        verbose_name_plural = "Horas Laborales"
         ordering = ['doctor', 'day__id', 'start_time']
 
 
@@ -89,7 +99,7 @@ class Service(models.Model):
 
     class Meta:
         verbose_name = "Service"
-        verbose_name_plural = "Services"
+        verbose_name_plural = "Servicios"
         ordering = ['name']
 
 
@@ -119,7 +129,7 @@ class Appointment(models.Model):
 
     class Meta:
         verbose_name = "Appointment"
-        verbose_name_plural = "Appointments"
+        verbose_name_plural = "Citas"
         ordering = ['-date', '-time']
 
 
@@ -147,6 +157,6 @@ class ClinicalHistory(models.Model):
 
     class Meta:
         verbose_name = "Clinical History"
-        verbose_name_plural = "Clinical Histories"
+        verbose_name_plural = "Historiales Clínicos"
         ordering = ['-appointment__date']
 
